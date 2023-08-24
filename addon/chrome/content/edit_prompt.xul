@@ -18,8 +18,8 @@
     </menulist>
 
     <!-- input the edit string -->
-    <label control="zbatch-edit-textbox" value="Replacement string (use ${field} to refer to an item's own field):" />
-    <textbox id="zbatch-edit-textbox" multiline="true" rows="1" size="40" value="empty" />
+    <label control="zbatch-edit-textbox" value="Replacement string (use ${field} to refer to an item's own field, ${field:regex} to apply a regex to it):" />
+    <textbox id="zbatch-edit-textbox" multiline="true" rows="1" value="empty" />
     <button id="zbatch-edit-preview-button" label="Preview"/>
     
     <!-- control scripts -->

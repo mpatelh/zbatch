@@ -61,7 +61,6 @@ class zbatch {
                 }
             }
         } else if(operation == "Edit Field...") {
-            
             this.win.addEventListener("load", function() {
                 this.log("Window loaded!");
             });

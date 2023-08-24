@@ -7,7 +7,7 @@ var edit_prompt = {
     {
         var data = window.arguments[0];
         var zot = data["zotero"];
-        log("onload() called");
+        log("edit_prompt.onload() called");
 
         // find all fields that selected items have in common
         var valid_fields = [];
@@ -92,6 +92,42 @@ var edit_prompt = {
         return preview_text.slice(0, -1);
     },
 
+    // returns the index of the matching brace, accounting for escape sequences
+    // e.g. "{l:\\\\\\{}st}lo" -> 7
+    // e.g. "{l:\\\\{}st}lo" -> 9
+    // e.g. "{l:\\{}st}lo" -> 5
+    // e.g. "{l:{}st}lo" -> 7
+    find_matching_brace : function(str) {
+        if (str.length == 0 || str.charAt(0) != '{') {
+            return -1;
+        }
+
+        var stack = [];
+        var escaped = false;
+        for (var i = 0; i < str.length; i++) {
+            var c = str.charAt(i);
+            
+            // for the current charcter
+            if (!escaped) {
+                if (c === '{')
+                    stack.push(i);
+                else if (c === '}')
+                    stack.pop();
+            }
+
+            if (stack.length == 0)
+                return i;
+
+            // for the next character
+            if (escaped == false && c === '\\')
+                escaped = true;
+            else
+                escaped = false;
+        }
+
+        return -1;
+    },
+
     // iterate through the substitution string to replace ${field_name} instances with their corresponding data
     apply_subst_string : function(item, str, field_name)
     {
@@ -101,23 +137,53 @@ var edit_prompt = {
         var out_str = "";
         var src_ptr = 0;
         
-        let match;
-        const regexp = /\${[a-zA-Z]+}/g;
-        while((match = regexp.exec(str)) !== null) {
-            var matched_str = match[0];
+        var match_start;
+        while((match_start = str.slice(src_ptr).indexOf("\${")) !== -1) {
+            var matching_brace_end = this.find_matching_brace(str.slice(match_start + 1))
+            if(matching_brace_end <= 0) {
+                return {"success" : false, "message" : `Unmatched brace starting at "${str.slice(match_start)}"`};
+            }
 
+            // get the field token
+            var match_end = match_start + matching_brace_end + 1; // include the end brace
+            var matched_str = str.slice(match_start, match_end + 1); // includes start and end braces
             if(matched_str.length <= 3) {
-                return {"success" : false, "message" : `Field designation "${matched_str}" is invalid`};
+                return {"success" : false, "message" : `Field designation "${matched_str}" is empty`};
             } 
-            var matched_field_name = matched_str.slice(2, -1);
+
+            // parse the field token
+            var matched_field_colon_idx = matched_str.indexOf(':');
+            var matched_field_name = matched_field_colon_idx == -1 ? matched_str : matched_str.slice(0, matched_field_colon_idx);
+            var matched_field_regex = matched_field_colon_idx == -1 ? "" : matched_str.slice(matched_field_colon_idx + 1);
             if(!zot.ItemFields.isValidForType(matched_field_name, item.itemTypeID)) {
                 return {"success" : false, "message" : `Invalid field name "${matched_field_name}" for item with title "${item.getField("title")}"`};
             }
+
+            // get the field data and transform it according to the regex, if needed
+            var field_data = item.getField(matched_field_name);
+            if(matched_field_regex.length <= 0) { 
+                return {"success" : false, "message" : `Empty regex "${matched_field_regex}" for item with title "${item.getField("title")}"`};
+            } else {
+                var regex;
+                try {
+                    regex = new RegExp(matched_field_regex);
+                }
+                catch(e) {
+                    return {"success" : false, "message" : `Invalid regex "${matched_field_regex}" for item with title "${item.getField("title")}"`};
+                }
+
+                try {
+                    field_data = field_data.replace(field_data, );
+                }
+                catch (e) {
+                    return {"success" : false, "message" : `Failed to apply regex: "${matched_field_regex}" to field: "${matched_field_name}" with field data: "${field_data}" for item with title "${item.getField("title")}"`};
+                }                
+            }
             
-            var src_start_idx = match.index;
-            out_str += str.slice(src_ptr, src_start_idx);
-            out_str += item.getField(matched_field_name); // might actually be empty
-            src_ptr = src_start_idx + matched_str.length;
+            // update the output string
+            out_str += str.slice(src_ptr, match_start);
+            out_str += field_data; // might actually be empty
+            src_ptr = match_end + 1;
         }
         out_str += str.slice(src_ptr, str.length);
 
@@ -127,9 +193,10 @@ var edit_prompt = {
     on_preview : function() {
         var preview_text = edit_prompt.populate_item_updates();
         if(preview_text.length > 0) {
-            var ps = Components.classes["@mozilla.org/embedcomp/prompt-service;1"]
-                .getService(Components.interfaces.nsIPromptService);
-            ps.alert(null, "Preview of Edit", "Preview of expected changes:\n" + preview_text);
+            // var ps = Components.classes["@mozilla.org/embedcomp/prompt-service;1"]
+            //     .getService(Components.interfaces.nsIPromptService);
+            // ps.alert(null, "Preview of Edit", "Preview of expected changes:\n" + preview_text);
+            edit_prompt.show_confirm_dialog(preview_text)
         }
     },
 
@@ -145,19 +212,45 @@ var edit_prompt = {
             return false;        
         }
 
-        var ps = Components.classes["@mozilla.org/embedcomp/prompt-service;1"]
-			.getService(Components.interfaces.nsIPromptService);
-        var confirmed = ps.confirm(null, "Confirm Edit", "Confirm the following edit:\n" + preview_text);
-        
-        if(confirmed) {
+        var accepted = edit_prompt.show_confirm_dialog(preview_text)
+        if (accepted) {
             log(`dialog accepted`);
             data["accepted"] = true;
-            return true;
+            return true;        
         } else {
             log(`acceptance cancelled`);
             data["accepted"] = false;
             return false;
         }
+
+
+        // var ps = Components.classes["@mozilla.org/embedcomp/prompt-service;1"]
+		// 	.getService(Components.interfaces.nsIPromptService);
+        // var confirmed = ps.confirm(null, "Confirm Edit", "Confirm the following edit:\n" + preview_text);
+        
+        // if(confirmed) {
+        //     log(`dialog accepted`);
+        //     data["accepted"] = true;
+        //     return true;
+        // } else {
+        //     log(`acceptance cancelled`);
+        //     data["accepted"] = false;
+        //     return false;
+        // }
+    },
+
+    show_confirm_dialog: function(preview_text) {
+        var params = {
+              "zotero" : window.arguments[0]["zotero"]
+            , "text" : preview_text
+            , "accepted" : null
+        };
+
+        window.openDialog("chrome://zbatch/content/confirm_dialog.xul",
+             "confirm-dialog", 
+             "centerscreen,chrome,modal", 
+             params).focus();
+        return params["accepted"]
     },
 
     on_cancel : function()
